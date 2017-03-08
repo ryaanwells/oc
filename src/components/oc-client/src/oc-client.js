@@ -21,7 +21,6 @@ var oc = oc || {};
   oc.cmd = oc.cmd || [];
   oc.renderedComponents = oc.renderedComponents || {};
   oc.status = oc.status || false;
-
   // If oc client is already inside the page, we do nothing.
   if(!!oc.status){
     return oc;
@@ -32,8 +31,6 @@ var oc = oc || {};
   // Constants
   var CDNJS_BASEURL = 'https://cdnjs.cloudflare.com/ajax/libs/',
       IE9_AJAX_POLYFILL_URL = CDNJS_BASEURL + 'jquery-ajaxtransport-xdomainrequest/1.0.3/jquery.xdomainrequest.min.js',
-      HANDLEBARS_URL = CDNJS_BASEURL + 'handlebars.js/4.0.5/handlebars.runtime.min.js',
-      JADE_URL = CDNJS_BASEURL + 'jade/1.11.0/runtime.min.js',
       JQUERY_URL = CDNJS_BASEURL + 'jquery/1.11.2/jquery.min.js',
       RETRY_INTERVAL = oc.conf.retryInterval || 5000,
       RETRY_LIMIT = oc.conf.retryLimit || 30,
@@ -62,6 +59,19 @@ var oc = oc || {};
       initialising = false,
       retries = {},
       isBool = function(a){ return typeof(a) === 'boolean'; };
+
+  var coreTemplates = [
+    { type: 'handlebars',
+      externals: [
+      { global: 'Handlebars', url: 'https://cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.0.5/handlebars.runtime.min.js' }
+    ]},
+    { type: 'jade',
+      externals: [
+      { global: 'jade', url: 'https://cdnjs.cloudflare.com/ajax/libs/jade/1.11.0/runtime.min.js' }
+    ]}
+  ];
+
+  var templates = oc.conf.templates ? coreTemplates.concat(oc.conf.templates) : coreTemplates;
 
   var logger = {
     error: function(msg){
@@ -98,6 +108,12 @@ var oc = oc || {};
     }
 
     return href;
+  };
+
+  oc.registerTemplates = function () {
+    templates = Array.prototype.concat.apply(templates, arguments);
+    oc.ready(oc.renderUnloadedComponents);
+    return templates;
   };
 
   // A minimal require.js-ish that uses head.js
@@ -294,25 +310,35 @@ var oc = oc || {};
 
   oc.render = function(compiledViewInfo, model, callback){
     oc.ready(function(){
-      if(!!compiledViewInfo.type.match(/jade|handlebars/g)){
+
+      var template = templates.find(function(template){return template.type === compiledViewInfo.type});
+
+      if(template){
         oc.require(['oc', 'components', compiledViewInfo.key], compiledViewInfo.src, function(compiledView){
           if(!compiledView){
             callback(MESSAGES_ERRORS_LOADING_COMPILED_VIEW.replace('{0}', compiledViewInfo.src));
           } else {
-            if(compiledViewInfo.type === 'handlebars'){
-              oc.require('Handlebars', HANDLEBARS_URL, function(){
-                try {
-                  var linked = $window.Handlebars.template(compiledView, []);
-                  callback(null, linked(model));
-                } catch(e){
-                  callback(e.toString());
+
+            var externals = template.externals;
+            var externalsRequired = 0;
+
+            externals.forEach(function(library, _index, externals){
+              oc.require(library.global, library.url, function(){
+                externalsRequired++;
+                if(externalsRequired === externals.length) {
+                  if(compiledViewInfo.type === 'handlebars'){
+                    try {
+                      var linked = $window.Handlebars.template(compiledView, []);
+                      callback(null, linked(model));
+                    } catch(e){
+                      callback(e.toString());
+                    }
+                  } else {
+                    callback(null, compiledView(model));
+                  }
                 }
               });
-            } else if(compiledViewInfo.type === 'jade'){
-              oc.require('jade', JADE_URL, function(){
-                callback(null, compiledView(model));
-              });
-            }
+            });
           }
         });
       } else {
